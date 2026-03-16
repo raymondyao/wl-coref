@@ -348,14 +348,22 @@ class CorefModel:  # pylint: disable=too-many-instance-attributes
 
         # Obtain bert output for selected batches only
         attention_mask = (subwords_batches != self.tokenizer.pad_token_id)
-        out, _ = self.bert(
+        outputs = self.bert(
             subwords_batches_tensor,
             attention_mask=torch.tensor(
-                attention_mask, device=self.config.device))
-        del _
+                attention_mask, device=self.config.device, dtype=torch.long),
+        )
+
+        # transformers may return a tuple, a ModelOutput, or a plain Tensor
+        if isinstance(outputs, torch.Tensor):
+            last_hidden_state = outputs
+        elif hasattr(outputs, "last_hidden_state"):
+            last_hidden_state = outputs.last_hidden_state
+        else:
+            last_hidden_state = outputs[0]
 
         # [n_subwords, bert_emb]
-        return out[subword_mask_tensor]
+        return last_hidden_state[subword_mask_tensor]
 
     def _build_model(self):
         self.bert, self.tokenizer = bert.load_bert(self.config)
@@ -415,7 +423,7 @@ class CorefModel:  # pylint: disable=too-many-instance-attributes
     def _clusterize(self, doc: Doc, scores: torch.Tensor, top_indices: torch.Tensor):
         antecedents = scores.argmax(dim=1) - 1
         not_dummy = antecedents >= 0
-        coref_span_heads = torch.arange(0, len(scores))[not_dummy]
+        coref_span_heads = torch.arange(0, len(scores), device=scores.device)[not_dummy]
         antecedents = top_indices[coref_span_heads, antecedents[not_dummy]]
 
         nodes = [GraphNode(i) for i in range(len(doc["cased_words"]))]
